@@ -1,0 +1,159 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<mule xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core"
+	xmlns:as400="http://www.mulesoft.org/schema/mule/as400"
+	xmlns:dw="http://www.mulesoft.org/schema/mule/ee/dw" xmlns:http="http://www.mulesoft.org/schema/mule/http"
+	xmlns="http://www.mulesoft.org/schema/mule/core"
+	xmlns:doc="http://www.mulesoft.org/schema/mule/documentation" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="
+http://www.mulesoft.org/schema/mule/ee/dw http://www.mulesoft.org/schema/mule/ee/dw/current/dw.xsd 
+http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+http://www.mulesoft.org/schema/mule/as400 http://www.mulesoft.org/schema/mule/as400/current/mule-as400.xsd
+http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd">
+	
+    <configuration-properties file="app.properties" doc:name="Configuration properties"/>
+    
+    <as400:config name="AS400_Config" doc:name="AS400 Config">
+        <as400:config-connection endpoint="${as400.endpoint}" userid="${as400.user}" password="${as400.pwd}" />
+    </as400:config>
+
+    <http:request-config name="HTTP_Request_configuration" doc:name="HTTP Request configuration">
+		<http:request-connection host="currencyexchange.cloudhub.io"/>
+	</http:request-config>
+	
+    <http:listener-config name="HTTP_Listener_config" doc:name="HTTP Listener config">
+        <http:listener-connection host="localhost" port="8081" />
+    </http:listener-config>
+    
+	<flow name="MainFlow"> 
+        <as400:read-data-queue config-ref="AS400_Config" 
+            dtaq="${as400.req.queue}" library="${as400.library}" dtaqKey="''" 
+            dtaqKeySearchType="GREATER_THAN_OR_EQUAL" doc:name="Read data queue"/>
+		<logger message="Transaction: #[attributes.key] START: Received From / To currencies:  #[payload]" 
+            level="INFO" doc:name="Log Transaction Received" />
+        <set-variable variableName="correlationID" value="#[attributes.key]" doc:name="Save Trans ID" />
+		<set-variable variableName="currenciesArray" value="#[payload splitBy ',']" doc:name="Set currenciesArray"/>
+        <set-variable variableName="toCCY" value="#[vars.currenciesArray[1]]" doc:name="Save target currency" />
+        <http:request config-ref="HTTP_Request_configuration" method="GET" path="/api/exchange" doc:name="REST API Get Exchange Rate">
+			<http:query-params ><![CDATA[#[output applicaton/java
+---
+{
+	fromCCY : vars.currenciesArray[0],
+	toCCY : vars.currenciesArray[1]
+}]]]></http:query-params>
+		</http:request>
+		<logger message="Transaction: #[vars.correlationID] WIP: Received Exchange rate: #[payload]" level="INFO" doc:name="Log Rate Received" />
+		<ee:transform doc:name="Transform Message" doc:id="53b6f27d-c04e-442e-a30d-699da4fb6b8f">
+			<ee:message >
+				<ee:set-payload><![CDATA[%dw 2.0
+output application/java
+---
+payload.exchangeRate as String				]]></ee:set-payload>
+			</ee:message>
+		</ee:transform>
+		<as400:write-data-queue config-ref="AS400_Config" library="${as400.library}" 
+            dtaq="${as400.res.queue}" dtaqKey="#[vars.correlationID]" doc:name="Write AS400 response (Rates)">
+            <as400:dq-entry><![CDATA[#['Status=OK ' ++ payload]]]></as400:dq-entry>
+        </as400:write-data-queue>
+		<logger message="Transaction: #[vars.correlationID] COMPLETED: Received Exchange rate: #[payload], sent response to AS400" 
+            level="INFO" doc:name="Log Completion"/>
+		<error-handler >
+			<on-error-continue enableNotifications="true" logException="true" doc:name="On Error Continue" type="ANY">
+				<logger message="Transaction: #[vars.correlationID] FAILED with exception #[error]" 
+				    level="ERROR" doc:name="Log Exception" />
+				<as400:write-data-queue config-ref="AS400_Config" library="${as400.library}" 
+				    dtaq="${as400.res.queue}" dtaqKey="#[vars.correlationID]" doc:name="Write AS400 response (ERROR)">
+					<as400:dq-entry><![CDATA[Status=FAILED; Errors while executing the flow]]></as400:dq-entry>
+				</as400:write-data-queue>
+			</on-error-continue>
+		</error-handler>  
+    </flow>
+    
+    <flow name="readDataQueue">
+        <http:listener config-ref="HTTP_Listener_config" path="/readDQ" doc:name="Listener"/>
+        <logger message="ReadDataQueueDemo received message #[payload]" level="INFO" doc:name="Logger"/>
+        <set-variable variableName="queue" value="#[attributes.queryParams.queue]" doc:name="Set queue"/>
+        <set-variable value="#[attributes.queryParams.key]" variableName="key" doc:name="Set key"/>
+        <as400:read-data-queue-processor
+                config-ref="AS400_Config"
+                library="${as400.library}"
+                dtaqKey="#[vars.key]"
+                dtaqKeySearchType="GREATER_THAN_OR_EQUAL"
+                dtaq="#[vars.queue]"
+                doc:name="Read data queue processor"/>
+        <choice doc:name="Choice">
+            <when expression="payload is Null" >
+                <set-payload
+                        value="#['No data read from queue \'' ++ vars.queue ++ '\' with key \'' ++ vars.key ++  '\'']"
+                        encoding="UTF-8"
+                        mimeType="text/plain"
+                        doc:name="Set Payload"/>
+            </when>
+            <otherwise >
+                <set-payload
+                        value="#['Data read from queue ' ++ vars.queue ++ ' with key ' ++ vars.key ++  ' successfully. Payload: ' ++ message.payload]"
+                        encoding="UTF-8"
+                        mimeType="text/plain"
+                        doc:name="Set Payload" />
+            </otherwise>
+        </choice>
+        <logger message="#[payload]" level="INFO" doc:name="Logger"/>
+        <error-handler >
+            <on-error-continue enableNotifications="true" logException="false" type="AS400:DATA_QUEUE_READ_FAILED" doc:name="On Error Continue">
+                <set-payload
+                        value="#['Unable to read data from queue \''++ vars.queue ++ '\' with key \'' ++ vars.key ++ '\'']"
+                        encoding="UTF-8"
+                        mimeType="text/plain"
+                        doc:name="Set Payload"/>
+                <logger level="INFO" message="#[payload]" doc:name="Logger"/>
+            </on-error-continue>
+            <on-error-continue enableNotifications="true" logException="false" type="AS400:INVALID_LICENSE" doc:name="On Error Continue">
+                <set-payload
+                        value="#['Operation failed due to invalid licesense']"
+                        encoding="UTF-8"
+                        mimeType="text/plain"
+                        doc:name="Set Payload"/>
+                <logger level="INFO" message="#[payload]" doc:name="Logger"/>
+            </on-error-continue>
+        </error-handler>
+    </flow>
+
+    <flow name="writeDataQueue">
+        <http:listener config-ref="HTTP_Listener_config" path="/writeDQ" doc:name="Listener"/>
+        <logger message="ReadDataQueueDemo received message #[payload]" level="INFO" doc:name="Logger"/>
+        <set-variable variableName="queue" value="#[attributes.queryParams.queue]" doc:name="Set queue"/>
+        <set-variable value="#[attributes.queryParams.key]" variableName="key" doc:name="Set key"/>
+        <set-variable value="#[attributes.queryParams.content]" variableName="content" doc:name="Set content"/>
+        <as400:write-data-queue
+                config-ref="AS400_Config"
+                dtaq="#[vars.queue]"
+                library="${as400.library}"
+                dtaqKey="#[vars.key]"
+                doc:name="Write data queue">
+            <as400:dq-entry ><![CDATA[#[vars.content]]]></as400:dq-entry>
+        </as400:write-data-queue>
+        <set-payload
+                value="#['Data wrote into queue ' ++ vars.queue ++ ' with key ' ++ vars.key ++  ' successfully. Payload: ' ++ vars.content]"
+                encoding="UTF-8"
+                mimeType="text/plain"
+                doc:name="Set Payload"/>
+        <logger message="#[payload]" level="INFO" doc:name="Logger"/>
+        <error-handler >
+            <on-error-continue enableNotifications="true" logException="false" type="AS400:DATA_QUEUE_WRITE_FAILED" doc:name="On Error Continue">
+                <set-payload
+                        value="#['Unable to write data into queue \''++ vars.queue ++ '\' with key \'' ++ vars.key ++ '\'']"
+                        encoding="UTF-8"
+                        mimeType="text/plain"
+                        doc:name="Set Payload"/>
+                <logger level="INFO" message="#[payload]" doc:name="Logger"/>
+            </on-error-continue>
+            <on-error-continue enableNotifications="true" logException="false" type="AS400:INVALID_LICENSE" doc:name="On Error Continue">
+                <set-payload
+                        value="#['Operation failed due to invalid licesense']"
+                        encoding="UTF-8"
+                        mimeType="text/plain"
+                        doc:name="Set Payload"/>
+                <logger level="INFO" message="#[payload]" doc:name="Logger"/>
+            </on-error-continue>
+        </error-handler>
+    </flow>
+</mule>
