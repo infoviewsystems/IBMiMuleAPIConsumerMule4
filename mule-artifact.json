@@ -1,20 +1,3 @@
 {
-  "configs": [
-    "ibm-i-mule-api-consumer.xml"
-  ],
-  "secureProperties": [],
-  "redeploymentEnabled": true,
-  "name": "ibm-i-mule-api-consumer",
-  "minMuleVersion": "4.1.1",
-  "requiredProduct": "MULE_EE",
-  "classLoaderModelLoaderDescriptor": {
-    "id": "mule",
-    "attributes": {
-      "exportedResources": []
-    }
-  },
-  "bundleDescriptorLoader": {
-    "id": "mule",
-    "attributes": {}
-  }
+  "minMuleVersion": "4.1.1"
 }
