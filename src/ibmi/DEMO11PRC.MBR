@@ -1,0 +1,73 @@
+     H DEBUG DATFMT(*ISO)  bnddir('QC2LE')
+     H*================================================================
+     H*  C R E A T I O N     P A R A M E T E R S                      *
+     H*CRT: CRTBNDRPG                DFTACTGRP(*NO) ACTGRP(*caller) +:*
+     H*CRT:  dbgview(*all) option(*nodebugio)                        :*
+     H*================================================================
+     H*
+     H* Description:    IBM i consumer demo - interface program
+     H*
+     H* Author :        Dima Kuznetsov
+     H* Creation date:  12/1/2014
+     H*
+
+     d main            pr                  extpgm('DEMO11PRC')
+     d   fromCcy                      3a   const
+     d   toCcy                        3a   const
+     d   rate                        11s 5
+     d   returnCd                     3s 0
+     d   returnMsg                  254a
+
+      * Prototype to C "atof" function
+     d atof            pr             8f   extproc('atof')
+     d   string                        *   Value Options(*String)
+
+     d crttrn          pr                  extpgm('CRTTRN')
+     d  transType                    10    const options(*nopass)
+     d  altTrnID                     30    const options(*nopass)
+     d  reqData                     254a   const options(*nopass)
+     d  transID                      20i 0       options(*nopass)
+     d  returnCd                      3s 0       options(*nopass)
+     d  returnMsg                   254          options(*nopass)
+
+     d transID         s             20i 0
+     d c#trnType       s             10    inz('CCYRATEEXT')
+
+
+      * ======== Entry parms
+     d main            pi
+     d   fromCcy                      3a   const
+     d   toCcy                        3a   const
+     d   rate                        11s 5
+     d   returnCd                     3s 0
+     d   returnMsg                  254a
+
+     d dtaInOut      e ds                  extname(DEMO11FMT) qualified
+
+      /free
+
+          returnCd = 0;
+          returnMsg= *blanks;
+          rate = *zeros;
+          if (fromccy <> *blanks and toccy <> *blanks);
+            // Create and process new transaction
+            clear dtaInOut;
+            dtaInOut.fromccy = fromccy;
+            dtaInOut.toccy = toccy;
+            callp(e) crttrn(c#trntype:*blanks:dtaInOut:
+                   transID:returnCd:returnMsg);
+            // Convert Mule response
+            if not %error and returnCd >= 0;
+              monitor;
+                dtaInOut = returnMsg;
+                rate = dtaInOut.rate;
+                returnMsg = dtaInOut.errMsg;
+              on-error;
+                returnMsg = 'Mule returned incorrect rate value ' + returnMsg;
+              endmon;
+            endif;
+          endif; // fromccy <> *blanks ...
+          *inlr = *on;
+          return;
+
+      /end-free

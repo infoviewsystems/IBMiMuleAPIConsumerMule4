@@ -1,0 +1,56 @@
+     H DEBUG DATFMT(*ISO)  bnddir('QC2LE')
+     H*================================================================
+     H*  C R E A T I O N     P A R A M E T E R S                      *
+     H*CRT: CRTBNDRPG                DFTACTGRP(*NO) ACTGRP(*caller) +:*
+     H*CRT:  dbgview(*all) option(*nodebugio)                        :*
+     H*================================================================
+     H*
+     H* Description:    AS400 connector demo # 1 - call Mule from As400
+     H*                 _______________________ _______________________
+     H*
+     H* Author :        Dima Kuznetsov
+     H* Creation date:  12/1/2014
+     H*
+
+     fdemo01d   cf   e             workstn
+
+      * Prototype to C "atof" function
+     d atof            pr             8f   extproc('atof')
+     d   string                        *   Value Options(*String)
+
+     d getRate         pr                  extpgm('DEMO11PRC')
+     d  fromCcy                       3a   const
+     d  toCcy                         3a   const
+     d  rate                         11s 5
+     d  returnCd                      3s 0
+     d  returnMsg                   254
+
+     d rate            s             11s 5
+     d returnCd        s              3s 0
+     d returnMsg       s            254
+
+      /free
+        exfmt main;
+        dow *in03 = *off;
+          exsr processSR;
+          exfmt main;
+        enddo; // *in03 = off
+        *inlr = *on;
+        return;
+
+        begsr processsr;
+
+          muleresp = *blanks;
+          toamount = *zeros;
+          if (fromccy <> *blanks and toccy <> *blanks
+            and amount <> 0);
+            // Create and process new transaction
+            callp(e) getRate(fromccy:toccy:rate:returnCd:returnMsg);
+            muleresp = returnMsg;
+            if not %error and returnCd >= 0;
+              toamount = amount * rate;
+            endif;
+          endif;
+        endsr;
+
+      /end-free

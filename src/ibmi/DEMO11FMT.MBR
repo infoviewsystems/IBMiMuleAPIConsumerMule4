@@ -1,0 +1,14 @@
+--*CRT: RUNSQLSTM COMMIT(*NONE) ERRLVL(30)            :*
+
+set schema muledemos;
+
+drop table DEMO11FMT;
+
+-- Get Price Response Staging
+create table DEMO11FMT (
+  fromCCY     char(3) not null with default,
+  toCCY       char(3) not null with default,
+  rate        decimal(11,5) not null with default,
+  errCode     decimal(3) not null with default,
+  errMsg      char(50) not null with default);
+
